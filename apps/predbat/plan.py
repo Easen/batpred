@@ -3689,7 +3689,7 @@ class Plan:
 
     def optimise_solar_headroom(self, best_metric, best_cost, best_keep, best_cycle, best_carbon, best_import, record_export_windows, debug_mode=False):
         """Lower eligible pre-solar export targets when the forecast would clip recoverable PV."""
-        if not self.calculate_best_export or not self.export_window_best or not self.export_more_solar_headroom:
+        if not self.calculate_best_export or not self.export_window_best:
             return best_metric, best_cost, best_keep, best_cycle, best_carbon, best_import
 
         pv_forecast = self.prediction.pv_forecast_minute_step
@@ -3720,10 +3720,11 @@ class Plan:
                 spill = max(pv - load - export_cap, 0.0) * self.battery_loss
                 recoverable_pv += min(spill, charge_rate * PREDICT_STEP)
 
-            recoverable_pv = min(recoverable_pv, max(self.soc_max - self.reserve, 0.0))
+            reserve_floor = max(self.reserve, getattr(self, "best_soc_min", 0.0))
+            recoverable_pv = min(recoverable_pv, max(self.soc_max - reserve_floor, 0.0))
             current_headroom = max(self.soc_max - predicted_soc, 0.0)
             extra_headroom = max(recoverable_pv - current_headroom, 0.0)
-            target_soc = max(self.reserve, predicted_soc - extra_headroom)
+            target_soc = max(reserve_floor, predicted_soc - extra_headroom)
             if extra_headroom < 0.05 or target_soc >= predicted_soc:
                 continue
 
@@ -4840,9 +4841,8 @@ class Plan:
             best_metric, best_cost, best_keep, best_cycle, best_carbon, best_import = self.optimise_solar(best_metric, best_cost, best_keep, best_cycle, best_carbon, best_import, record_export_windows, debug_mode=debug_mode)
 
         # Create battery headroom before forecast solar that would exceed the physical grid export limit.
-        best_metric, best_cost, best_keep, best_cycle, best_carbon, best_import = self.optimise_solar_headroom(
-            best_metric, best_cost, best_keep, best_cycle, best_carbon, best_import, record_export_windows, debug_mode=debug_mode
-        )
+        if self.export_more_solar_headroom:
+            best_metric, best_cost, best_keep, best_cycle, best_carbon, best_import = self.optimise_solar_headroom(best_metric, best_cost, best_keep, best_cycle, best_carbon, best_import, record_export_windows, debug_mode=debug_mode)
 
         # Swaps run once all other passes have settled. The export swap can only defer an export that
         # already exists when it runs, and the plan pass and solar pass both turn exports on - on the

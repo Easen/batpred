@@ -94,9 +94,8 @@ def run_optimise_solar(
     # Baseline metric of the current plan
     best_metric, best_battery_value, best_cost, best_keep, best_cycle, best_carbon, best_import, best_export = my_predbat.run_prediction_metric(charge_limit_best, charge_window_best, export_window_best, my_predbat.export_limits_best, end_record=end_record)
 
-    best_metric, best_cost, best_keep, best_cycle, best_carbon, best_import = my_predbat.optimise_solar_headroom(
-        best_metric, best_cost, best_keep, best_cycle, best_carbon, best_import, len(export_window_best)
-    )
+    if my_predbat.calculate_best_export and my_predbat.export_window_best and my_predbat.export_more_solar_headroom:
+        best_metric, best_cost, best_keep, best_cycle, best_carbon, best_import = my_predbat.optimise_solar_headroom(best_metric, best_cost, best_keep, best_cycle, best_carbon, best_import, len(export_window_best))
 
     # Run the export more solar optimisation
     my_predbat.optimise_solar(best_metric, best_cost, best_keep, best_cycle, best_carbon, best_import, len(export_window_best))
@@ -350,6 +349,27 @@ def test_solar_headroom_export(my_predbat):
         threshold=100.0,
         load_amount=0.2,
     )
+    my_predbat.best_soc_min = 7.0
+    failed |= run_optimise_solar(
+        "headroom_respects_best_soc_min",
+        my_predbat,
+        export_window_best=windows,
+        export_limits_best=[90.0, 100.0],
+        expect_export_limit=[None, 100.0],
+        pv_profile=pv_profile,
+        export_limit_kw=0.5,
+        battery_size=10.0,
+        battery_soc=9.5,
+        battery_rate_kw=5.0,
+        set_export_freeze=False,
+        threshold=100.0,
+        load_amount=0.2,
+        headroom_enabled=True,
+    )
+    target = export_target_of(my_predbat.export_limits_best[0])
+    if target is not None and target < 70.0:
+        print("ERROR: Headroom must not discharge the battery below the configured best_soc_min floor, got {}%".format(target))
+        failed = True
     failed |= run_optimise_solar(
         "no_solar_headroom_needed",
         my_predbat,
