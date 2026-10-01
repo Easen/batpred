@@ -9,7 +9,7 @@
 # pylint: disable=attribute-defined-outside-init
 
 from tests.test_infra import reset_rates, reset_inverter, update_rates_export
-from utils import unpack_export_limit
+from utils import export_target_of, unpack_export_limit
 from prediction import Prediction
 
 
@@ -33,6 +33,10 @@ def run_optimise_solar(
     expect_export_start=None,
     car_charging_slots=None,
     car_charging_from_battery=False,
+    pv_profile=None,
+    export_limit_kw=None,
+    battery_rate_kw=None,
+    headroom_enabled=False,
 ):
     print("Starting optimise solar test {}".format(name))
     failed = False
@@ -42,9 +46,17 @@ def run_optimise_solar(
     my_predbat.calculate_best_export = calculate_best_export
     my_predbat.set_export_freeze = set_export_freeze
     my_predbat.set_charge_freeze = True
+    my_predbat.export_more_solar_headroom = headroom_enabled
     my_predbat.export_more_solar_threshold = threshold
     my_predbat.soc_max = battery_size
     my_predbat.soc_kw = battery_soc
+    if battery_rate_kw is not None:
+        my_predbat.battery_rate_max_charge = battery_rate_kw / 60.0
+        my_predbat.battery_rate_max_discharge = battery_rate_kw / 60.0
+        my_predbat.battery_rate_max_export = battery_rate_kw / 60.0
+        my_predbat.inverter_limit = 10.0 / 60.0
+    if export_limit_kw is not None:
+        my_predbat.export_limit = export_limit_kw / 60.0
     my_predbat.reserve = 0.5
     my_predbat.manual_all_times = set()
 
@@ -60,7 +72,8 @@ def run_optimise_solar(
     pv_step = {}
     load_step = {}
     for minute in range(0, my_predbat.forecast_minutes, 5):
-        pv_step[minute] = pv_amount / (60 / 5)
+        pv_kw = pv_profile.get(minute, pv_amount) if pv_profile is not None else pv_amount
+        pv_step[minute] = pv_kw / (60 / 5)
         load_step[minute] = load_amount / (60 / 5)
     my_predbat.load_minutes_step = load_step
     my_predbat.load_minutes_step10 = load_step
@@ -80,6 +93,10 @@ def run_optimise_solar(
 
     # Baseline metric of the current plan
     best_metric, best_battery_value, best_cost, best_keep, best_cycle, best_carbon, best_import, best_export = my_predbat.run_prediction_metric(charge_limit_best, charge_window_best, export_window_best, my_predbat.export_limits_best, end_record=end_record)
+
+    best_metric, best_cost, best_keep, best_cycle, best_carbon, best_import = my_predbat.optimise_solar_headroom(
+        best_metric, best_cost, best_keep, best_cycle, best_carbon, best_import, len(export_window_best)
+    )
 
     # Run the export more solar optimisation
     my_predbat.optimise_solar(best_metric, best_cost, best_keep, best_cycle, best_carbon, best_import, len(export_window_best))
@@ -284,7 +301,71 @@ def run_optimise_solar_tests(my_predbat):
     )
 
     failed |= run_freeze_export_recapture_tests(my_predbat)
+    failed |= test_solar_headroom_export(my_predbat)
 
+    return failed
+
+
+def test_solar_headroom_export(my_predbat):
+    """Create pre-solar battery headroom only when forecast PV would be clipped."""
+    print("Test: solar headroom from pre-solar export")
+    windows = [
+        {"start": my_predbat.minutes_now, "end": my_predbat.minutes_now + 60, "average": 15.0},
+        {"start": my_predbat.minutes_now + 120, "end": my_predbat.minutes_now + 180, "average": 15.0},
+    ]
+    pv_profile = {minute: 3.0 for minute in range(120, 180, 5)}
+    failed = run_optimise_solar(
+        "pre_solar_headroom",
+        my_predbat,
+        export_window_best=windows,
+        export_limits_best=[90.0, 100.0],
+        expect_export_limit=[None, 100.0],
+        pv_profile=pv_profile,
+        export_limit_kw=0.5,
+        battery_size=10.0,
+        battery_soc=9.5,
+        battery_rate_kw=5.0,
+        set_export_freeze=False,
+        threshold=100.0,
+        load_amount=0.2,
+        headroom_enabled=True,
+    )
+    target = export_target_of(my_predbat.export_limits_best[0])
+    if target is None or not 60.0 <= target < 90.0:
+        print("ERROR: Expected a partial pre-solar export target below 90%, got {}".format(target))
+        failed = True
+
+    failed |= run_optimise_solar(
+        "headroom_default_off",
+        my_predbat,
+        export_window_best=windows,
+        export_limits_best=[90.0, 100.0],
+        expect_export_limit=[90.0, 100.0],
+        pv_profile=pv_profile,
+        export_limit_kw=0.5,
+        battery_size=10.0,
+        battery_soc=9.5,
+        battery_rate_kw=5.0,
+        set_export_freeze=False,
+        threshold=100.0,
+        load_amount=0.2,
+    )
+    failed |= run_optimise_solar(
+        "no_solar_headroom_needed",
+        my_predbat,
+        export_window_best=windows,
+        export_limits_best=[90.0, 100.0],
+        expect_export_limit=[90.0, 100.0],
+        pv_profile=pv_profile,
+        export_limit_kw=10.0,
+        battery_size=10.0,
+        battery_soc=9.5,
+        battery_rate_kw=5.0,
+        set_export_freeze=False,
+        threshold=100.0,
+        load_amount=0.2,
+        headroom_enabled=True,
+    )
     return failed
 
 

@@ -2672,7 +2672,7 @@ class Plan:
                 )
         return best_soc, best_metric, best_cost, best_soc_min, best_soc_min_minute, best_keep, best_cycle, best_carbon, best_import, best_metric_plan
 
-    def optimise_export(self, window_n, record_charge_windows, try_charge_limit, charge_window, export_window, export_limit, all_n=None, end_record=None, freeze_only=False, allow_freeze=True):
+    def optimise_export(self, window_n, record_charge_windows, try_charge_limit, charge_window, export_window, export_limit, all_n=None, end_record=None, freeze_only=False, allow_freeze=True, target_soc_options=None):
         """
         Optimise a single export window for best export %
         """
@@ -2725,13 +2725,26 @@ class Plan:
             if self.set_export_low_power:
                 loop_options.extend([(EXPORT_MODE_TARGET, power) for power in LOW_EXPORT_POWER_LEVELS])
 
+        target_soc_values = [self.best_soc_min]
+        if target_soc_options is not None:
+            target_soc_values = []
+            for target_soc in target_soc_options:
+                target_soc = max(self.reserve, min(target_soc, self.soc_max))
+                if target_soc not in target_soc_values:
+                    target_soc_values.append(target_soc)
+        loop_options = [
+            (mode, power, target_soc)
+            for mode, power in loop_options
+            for target_soc in (target_soc_values if mode == EXPORT_MODE_TARGET else [self.best_soc_min])
+        ]
+
         # Collect all options
         results = []
         results10 = []
         results90 = []
         run_pv90 = self.pv_metric90_weight > 0
         try_options = []
-        for loop_mode, loop_power in loop_options:
+        for loop_mode, loop_power, target_soc in loop_options:
             # Loop on window size
             loop_start = window["end"] - 5  # Minimum export window size 5 minutes
             while loop_start >= window["start"]:
@@ -2759,7 +2772,7 @@ class Plan:
 
                 # Never go below the minimum level. Only a target rung carries a SoC to clamp - the
                 # modes are whole instructions and pack_export_limit ignores the target for them.
-                this_export_limit = pack_export_limit(loop_mode, calc_percent_limit(self.best_soc_min, self.soc_max), loop_power)
+                this_export_limit = pack_export_limit(loop_mode, calc_percent_limit(target_soc, self.soc_max), loop_power)
                 try_options.append([start, this_export_limit])
 
                 results.append(self.launch_run_prediction_export(this_export_limit, start, window_n, try_charge_limit, charge_window, try_export_window, try_export, PV_SCENARIO_NOMINAL, all_n, end_record))
@@ -3673,6 +3686,76 @@ class Plan:
             self.charge_window_best = orig_charge_window_best
             self.charge_limit_best = orig_charge_limit_best
             return html_data, json_data
+
+    def optimise_solar_headroom(self, best_metric, best_cost, best_keep, best_cycle, best_carbon, best_import, record_export_windows, debug_mode=False):
+        """Lower eligible pre-solar export targets when the forecast would clip recoverable PV."""
+        if not self.calculate_best_export or not self.export_window_best or not self.export_more_solar_headroom:
+            return best_metric, best_cost, best_keep, best_cycle, best_carbon, best_import
+
+        pv_forecast = self.prediction.pv_forecast_minute_step
+        load_forecast = self.load_minutes_step
+        record_end = self.minutes_now + self.end_record
+        self.run_prediction(self.charge_limit_best, self.charge_window_best, self.export_window_best, self.export_limits_best, False, end_record=self.end_record)
+        selected = self.plan_metric_now(self.end_record)
+
+        days = sorted({window["start"] // 1440 for window in self.export_window_best[:record_export_windows] if window["start"] < record_end})
+        for day in days:
+            first_solar = None
+            for minute_absolute in range(max(day * 1440, self.minutes_now), min((day + 1) * 1440, record_end), PREDICT_STEP):
+                if pv_forecast.get(minute_absolute - self.minutes_now, 0.0) > 0:
+                    first_solar = minute_absolute
+                    break
+            if first_solar is None:
+                continue
+
+            first_solar_relative = first_solar - self.minutes_now
+            predicted_soc = self.predict_soc.get(first_solar_relative, self.soc_kw)
+            charge_rate = self.battery_rate_max_charge_dc if self.inverter_hybrid else self.battery_rate_max_charge
+            charge_rate = max(charge_rate, 0.0) * self.battery_rate_max_scaling * self.battery_loss
+            export_cap = max(min(self.export_limit, self.inverter_limit), 0.0) * PREDICT_STEP
+            recoverable_pv = 0.0
+            for minute in range(first_solar_relative, min(record_end - self.minutes_now, (day + 1) * 1440 - self.minutes_now), PREDICT_STEP):
+                pv = pv_forecast.get(minute, 0.0)
+                load = load_forecast.get(minute, 0.0)
+                spill = max(pv - load - export_cap, 0.0) * self.battery_loss
+                recoverable_pv += min(spill, charge_rate * PREDICT_STEP)
+
+            recoverable_pv = min(recoverable_pv, max(self.soc_max - self.reserve, 0.0))
+            current_headroom = max(self.soc_max - predicted_soc, 0.0)
+            extra_headroom = max(recoverable_pv - current_headroom, 0.0)
+            target_soc = max(self.reserve, predicted_soc - extra_headroom)
+            if extra_headroom < 0.05 or target_soc >= predicted_soc:
+                continue
+
+            for window_n in range(min(record_export_windows, len(self.export_window_best))):
+                window = self.export_window_best[window_n]
+                if window["start"] // 1440 != day or window["end"] > first_solar:
+                    continue
+                if export_mode_of(self.export_limits_best[window_n]) != EXPORT_MODE_TARGET:
+                    continue
+                if window["start"] in self.manual_all_times or not self.allow_this_export_window(window_n):
+                    continue
+
+                new_limit, new_start, _, _, _, _, _, _, _, _, candidate_metric = self.optimise_export(
+                    window_n,
+                    record_export_windows,
+                    self.charge_limit_best,
+                    self.charge_window_best,
+                    self.export_window_best,
+                    self.export_limits_best,
+                    end_record=self.end_record,
+                    target_soc_options=[target_soc],
+                )
+                if candidate_metric >= selected[0]:
+                    continue
+
+                self.export_limits_best[window_n] = new_limit
+                self.export_window_best[window_n]["start_orig"] = self.export_window_best[window_n].get("start_orig", window["start"])
+                set_window_start(self.export_window_best[window_n], new_start)
+                selected = self.plan_metric_now(self.end_record)
+                if self.debug_enable:
+                    self.log("Solar headroom: lowered export window {} to target {}kWh before {} PV, metric {}".format(window_n, target_soc, self.time_abs_str(first_solar), dp2(selected[0])))
+        return selected
 
     def optimise_solar(self, best_metric, best_cost, best_keep, best_cycle, best_carbon, best_import, record_export_windows, debug_mode=False):
         """
@@ -4755,6 +4838,11 @@ class Plan:
         # Export more solar - enable freeze export on idle solar windows if it doesn't cost too much
         if self.export_more_solar:
             best_metric, best_cost, best_keep, best_cycle, best_carbon, best_import = self.optimise_solar(best_metric, best_cost, best_keep, best_cycle, best_carbon, best_import, record_export_windows, debug_mode=debug_mode)
+
+        # Create battery headroom before forecast solar that would exceed the physical grid export limit.
+        best_metric, best_cost, best_keep, best_cycle, best_carbon, best_import = self.optimise_solar_headroom(
+            best_metric, best_cost, best_keep, best_cycle, best_carbon, best_import, record_export_windows, debug_mode=debug_mode
+        )
 
         # Swaps run once all other passes have settled. The export swap can only defer an export that
         # already exists when it runs, and the plan pass and solar pass both turn exports on - on the

@@ -1166,6 +1166,13 @@ CONFIG_ITEMS = [
         "default": False,
     },
     {
+        "name": "export_more_solar_headroom",
+        "friendly_name": "Export more solar headroom",
+        "type": "switch",
+        "enable": "expert_mode",
+        "default": False,
+    },
+    {
         "name": "export_more_solar_threshold",
         "friendly_name": "Export more solar threshold",
         "type": "input_number",
