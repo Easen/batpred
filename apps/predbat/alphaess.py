@@ -41,6 +41,7 @@ import time
 import aiohttp
 from datetime import datetime
 from component_base import ComponentBase
+from storage_cache import StorageCacheMixin
 from coordinator import inverter_record
 from alphaess_const import (
     ALPHAESS_BASE_URL,
@@ -92,7 +93,6 @@ from alphaess_const import (
     ALPHAESS_TTL_ENERGY,
 )
 
-
 _HOLD_NOT_EVALUATED = object()
 
 # The behaviour an AlphaESSCloud inverter has, stated for the discovery record's capabilities. A
@@ -110,13 +110,15 @@ ALPHAESS_CAPABILITIES = {
 }
 
 
-class AlphaESSAPI(ComponentBase):
+class AlphaESSAPI(ComponentBase, StorageCacheMixin):
     """AlphaESS Open API cloud component."""
 
     # Trace every API request/response while the AlphaESS integration beds in. Nobody on
     # the project has an AlphaESS account, so a tester's log is the only evidence available
     # for the inferred behaviour; flip to False once it is confirmed.
     api_debug = True
+    storage_module = ALPHAESS_STORAGE_MODULE
+    storage_log_name = "AlphaESS"
 
     def initialize(
         self,
@@ -1997,37 +1999,6 @@ class AlphaESSAPI(ComponentBase):
         self.log("Info: AlphaESS {}. Predbat can no longer read or control it, so num_inverters and the auto-configured args in apps.yaml now reference a system it cannot reach - re-bind it from the portal or the CLI, or update apps.yaml.".format(message))
         await self.save_control()
 
-    async def load_cache(self, name):
-        """Load one cache file, returning {} when absent or unreadable.
-
-        self.storage being None is checked FIRST and returns silently, with no warning and
-        no _restore_had_error: it means there is simply no Storage component configured
-        (the normal state for a standalone CLI run), which is a permanent, by-design
-        condition rather than a transient fault worth retrying or warning about. Only a
-        REAL failure below flags the restore as incomplete.
-        """
-        if self.storage is None:
-            return {}
-        try:
-            data = await self.storage.load(ALPHAESS_STORAGE_MODULE, name)
-        except Exception as error:
-            self.log("Warn: AlphaESS could not load cache {}: {}".format(name, error))
-            self._restore_had_error = True
-            return {}
-        return data if isinstance(data, dict) else {}
-
-    async def save_cache(self, name, data):
-        """Save one cache file, tolerating a storage failure.
-
-        Silently does nothing when self.storage is None - there is nothing to warn about.
-        """
-        if self.storage is None:
-            return
-        try:
-            await self.storage.save(ALPHAESS_STORAGE_MODULE, name, data)
-        except Exception as error:
-            self.log("Warn: AlphaESS could not save cache {}: {}".format(name, error))
-
     async def save_static(self):
         """Persist discovery. Refuses to overwrite a good cache with an empty result.
 
@@ -2073,17 +2044,21 @@ class AlphaESSAPI(ComponentBase):
         retried on a later cycle rather than silently marked done with nothing restored.
         """
         self._restore_had_error = False
-        static = await self.load_cache(ALPHAESS_CACHE_STATIC)
+        static_result = await self.load_cache(ALPHAESS_CACHE_STATIC)
+        static = self.cache_value(static_result) if isinstance(self.cache_value(static_result), dict) else {}
         if static.get("device_list"):
             self.device_list = list(static["device_list"])
             self.device_detail = dict(static.get("device_detail") or {})
-        config = await self.load_cache(ALPHAESS_CACHE_CONFIG)
+        config_result = await self.load_cache(ALPHAESS_CACHE_CONFIG)
+        config = self.cache_value(config_result) if isinstance(self.cache_value(config_result), dict) else {}
         self.device_config = dict(config.get("device_config") or {})
         self._periodic_ok = dict(config.get("periodic_ok") or {})
-        ratings = await self.load_cache(ALPHAESS_CACHE_RATINGS)
+        ratings_result = await self.load_cache(ALPHAESS_CACHE_RATINGS)
+        ratings = self.cache_value(ratings_result) if isinstance(self.cache_value(ratings_result), dict) else {}
         self._live_ok = dict(ratings.get("live_ok") or {})
         self._ev_present = dict(ratings.get("ev_present") or {})
-        control = await self.load_cache(ALPHAESS_CACHE_CONTROL)
+        control_result = await self.load_cache(ALPHAESS_CACHE_CONTROL)
+        control = self.cache_value(control_result) if isinstance(self.cache_value(control_result), dict) else {}
         self.local_schedule = dict(control.get("local_schedule") or {})
         self.applied_payload = dict(control.get("applied_payload") or {})
         self.control_active = set(control.get("control_active") or [])

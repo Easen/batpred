@@ -31,6 +31,7 @@ from component_base import ComponentBase
 from coordinator import inverter_record
 from mock_base import MockBase
 from oauth_mixin import OAuthMixin
+from storage_cache import StorageCacheMixin
 from tou_schedule import TouScheduleMixin, MINUTES_PER_DAY
 from sunsynk_const import (
     SUNSYNK_REGIONS,
@@ -99,7 +100,7 @@ SUNSYNK_CAPABILITIES = {
 }
 
 
-class SunsynkAPI(ComponentBase, OAuthMixin, TouScheduleMixin):
+class SunsynkAPI(ComponentBase, OAuthMixin, TouScheduleMixin, StorageCacheMixin):
     """Sunsynk Connect cloud API component."""
 
     # Trace every API request/response while the Sunsynk integration beds in. Nobody on
@@ -109,6 +110,8 @@ class SunsynkAPI(ComponentBase, OAuthMixin, TouScheduleMixin):
 
     # How many slots the TOU programme holds, read by TouScheduleMixin.build_tou_slots.
     TOU_SLOTS = TOU_SLOT_COUNT
+    storage_module = SUNSYNK_STORAGE_MODULE
+    storage_log_name = "Sunsynk"
 
     def initialize(
         self,
@@ -1320,60 +1323,6 @@ class SunsynkAPI(ComponentBase, OAuthMixin, TouScheduleMixin):
         """Handle a switch entity service call."""
         await self._handle_control_event(entity_id, service)
 
-    async def load_cache(self, name):
-        """Load one cache file, returning {} when absent or unreadable.
-
-        Also flags an in-progress restore_state() attempt as incomplete via
-        _restore_had_error when a REAL failure is caught here — see restore_state for why.
-        self.storage being None is checked first and returns silently, with no warning and
-        no _restore_had_error: it means there is simply no Storage component configured (the
-        normal state for a standalone CLI run, see mock_base.py), which is a permanent,
-        by-design condition rather than a transient fault worth retrying or warning about.
-        """
-        if self.storage is None:
-            return {}
-        try:
-            data = await self.storage.load(SUNSYNK_STORAGE_MODULE, name)
-        except Exception as error:
-            self.log(f"Warn: Sunsynk could not load cache {name}: {error}")
-            self._restore_had_error = True
-            return {}
-        return data if isinstance(data, dict) else {}
-
-    async def save_cache(self, name, data):
-        """Save one cache file, tolerating a storage failure.
-
-        Silently does nothing when self.storage is None (no Storage component configured,
-        the normal state for a standalone CLI run) - there is nothing to warn about, only
-        a REAL save failure below is worth logging.
-        """
-        if self.storage is None:
-            return
-        try:
-            await self.storage.save(SUNSYNK_STORAGE_MODULE, name, data)
-        except Exception as error:
-            self.log(f"Warn: Sunsynk could not save cache {name}: {error}")
-
-    async def age_cache(self, name):
-        """Return the age in minutes of one cache file, or None when unavailable.
-
-        Fails soft exactly like load_cache/save_cache: storage being absent (self.storage
-        is None, the normal state for a standalone CLI run), raising, or the entry never
-        having been written are all reported as None rather than propagating. Storage being
-        absent is a permanent, by-design condition, not a fault, so it returns silently and
-        leaves _restore_had_error untouched - unlike a REAL failure below, which still warns
-        and still flags _restore_had_error so a transient storage outage is retried on a
-        later call rather than being silently marked done with nothing restored.
-        """
-        if self.storage is None:
-            return None
-        try:
-            return await self.storage.age(SUNSYNK_STORAGE_MODULE, name)
-        except Exception as error:
-            self.log(f"Warn: Sunsynk could not read cache age for {name}: {error}")
-            self._restore_had_error = True
-            return None
-
     async def save_static(self):
         """Persist discovery results, which change only when the hardware does."""
         await self.save_cache(SUNSYNK_CACHE_STATIC, {"device_list": self.device_list, "device_detail": self.device_detail})
@@ -1423,20 +1372,20 @@ class SunsynkAPI(ComponentBase, OAuthMixin, TouScheduleMixin):
             return
         self._restore_had_error = False
 
-        static = await self.load_cache(SUNSYNK_CACHE_STATIC)
-        if static:
-            self.device_list = static.get("device_list", []) or []
-            self.device_detail = static.get("device_detail", {}) or {}
-            age = await self.age_cache(SUNSYNK_CACHE_STATIC)
-            if age is not None:
-                self.mark_refreshed("static", age)
+        static_result = await self.load_cache(SUNSYNK_CACHE_STATIC)
+        if static_result is not None:
+            static = static_result.value
+            if static:
+                self.device_list = static.get("device_list", []) or []
+                self.device_detail = static.get("device_detail", {}) or {}
+                self.mark_refreshed("static", static_result.age_minutes)
 
-        config = await self.load_cache(SUNSYNK_CACHE_CONFIG)
-        if config:
-            self.device_settings = config.get("device_settings", {}) or {}
-            age = await self.age_cache(SUNSYNK_CACHE_CONFIG)
-            if age is not None:
-                self.mark_refreshed("config", age)
+        config_result = await self.load_cache(SUNSYNK_CACHE_CONFIG)
+        if config_result is not None:
+            config = config_result.value
+            if config:
+                self.device_settings = config.get("device_settings", {}) or {}
+                self.mark_refreshed("config", config_result.age_minutes)
 
         ratings = await self.load_cache(SUNSYNK_CACHE_RATINGS)
         if ratings:
@@ -1449,9 +1398,10 @@ class SunsynkAPI(ComponentBase, OAuthMixin, TouScheduleMixin):
         # applied_payload without it would still leave every inverter silently unmanaged after a
         # restart. Past the age bound applied_payload is dropped, so a stale cache still forces a
         # fresh write-button press to recommit, rather than trusting old control state indefinitely.
-        control_age = await self.age_cache(SUNSYNK_CACHE_CONTROL)
-        if control_age is not None:
-            control = await self.load_cache(SUNSYNK_CACHE_CONTROL)
+        control_result = await self.load_cache(SUNSYNK_CACHE_CONTROL)
+        if control_result is not None:
+            control_age = control_result.age_minutes
+            control = control_result.value
             stored_active = control.get("control_active")
             if isinstance(stored_active, list):
                 self.control_active = set(stored_active)

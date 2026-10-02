@@ -2508,8 +2508,8 @@ class SigenergyAPI(ComponentBase):
         now = datetime.now(self.local_tz)
         self.data_age[key] = now
         if self.storage:
-            # Expire after a day so stale data doesn't linger in the cache forever
-            await self.storage.save("sigenergy", key, data, format="json", expiry=now + timedelta(days=1))
+            # Expire after a day so stale data doesn't linger in the cache forever.
+            await self.storage.save_cached("sigenergy", key, data, ttl_minutes=24 * 60, format="json")
 
     async def _load_cache(self, key):
         """Load previously persisted poll-interval system state for a cache key.
@@ -2525,14 +2525,11 @@ class SigenergyAPI(ComponentBase):
         """
         if not self.storage:
             return None
-        data = await self.storage.load("sigenergy", key)
-        if data is None:
+        result = await self.storage.load_cached("sigenergy", key, ttl_minutes=24 * 60)
+        if result is None:
             return None
-        age = await self.storage.age("sigenergy", key)
-        if age is None:
-            return None
-        self.data_age[key] = datetime.now(self.local_tz) - timedelta(minutes=age)
-        return data
+        self.data_age[key] = datetime.now(self.local_tz) - timedelta(minutes=result.age_minutes)
+        return result.value
 
     async def load_cached_data(self):
         """Restore poll-interval system state from storage on startup.

@@ -39,6 +39,19 @@ class FakeStorage:
             raise IOError("storage unavailable")
         self.data[(module, name)] = payload
 
+    async def save_cached(self, module, name, payload, ttl_minutes=None, format="yaml", indent=None):
+        """Record a cache entry using the shared cache API."""
+        return await self.save(module, name, payload)
+
+    async def load_cached(self, module, name, ttl_minutes=None):
+        """Return a fresh cache result using the shared cache API."""
+        from storage import CacheResult
+
+        data = await self.load(module, name)
+        if data is None:
+            return None
+        return CacheResult(value=data, age_minutes=0)
+
 
 class StoredAlphaESS(MockAlphaESS):
     """MockAlphaESS with a working Storage component attached."""
@@ -135,7 +148,7 @@ def test_alphaess_no_storage_component_is_silent():
     client = MockAlphaESS()  # storage property returns None
     run_async_local(client.save_control())
     data = run_async_local(client.load_cache("control"))
-    if data != {}:
+    if data is not None:
         print(f"ERROR: load_cache returned {data}")
         failed = True
     if any("Warn" in message for message in client.log_messages):
@@ -208,6 +221,12 @@ def test_alphaess_corrupted_cache_data_coerced_safely():
             elif name == "control":
                 return ("corrupted", "tuple")
             return None
+
+        async def load_cached(self, module, name, ttl_minutes=None):
+            """Return corrupted values through the shared cache API."""
+            from storage import CacheResult
+
+            return CacheResult(value=await self.load(module, name), age_minutes=0)
 
     client = StoredAlphaESS(store=CorruptedStorage())
     run_async_local(client.restore_state())

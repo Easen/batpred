@@ -46,6 +46,22 @@ class FakeStorage:
             return None
         return self.ages.get(filename, 0.0)
 
+    async def save_cached(self, module, filename, data, ttl_minutes=None, format="yaml", indent=None):
+        """Record a cache entry using the shared cache API."""
+        return await self.save(module, filename, data, format=format)
+
+    async def load_cached(self, module, filename, ttl_minutes=None):
+        """Return a cache result using the stored fake age."""
+        from storage import CacheResult
+
+        data = await self.load(module, filename)
+        age = await self.age(module, filename)
+        if data is None:
+            return None
+        if ttl_minutes is not None and age is not None and age >= ttl_minutes:
+            return None
+        return CacheResult(value=data, age_minutes=age)
+
 
 class StorageDeye(MockDeye):
     """MockDeye with an injectable storage component, mirroring tests/test_ge_cloud.py."""
@@ -717,7 +733,7 @@ def test_corrupt_cache_only_affects_its_own_tier():
     if d.tier_expired("static", DEYE_TTL_STATIC):
         print("ERROR: a corrupt config file must not disturb the static clock")
         failed = True
-    if not any("could not read the config cache" in m for m in d.log_messages):
+    if not any("could not load cache config" in m for m in d.log_messages):
         print(f"ERROR: expected a cache-read warning: {d.log_messages}")
         failed = True
     assert not failed, "test_corrupt_cache_only_affects_its_own_tier"
@@ -820,7 +836,7 @@ def test_save_failure_is_survivable():
     if result is not False:
         print(f"ERROR: a failed save should report False, got {result!r}")
         failed = True
-    if not any("could not write the static cache" in m for m in d.log_messages):
+    if not any("could not save cache static" in m for m in d.log_messages):
         print(f"ERROR: expected a cache-write warning: {d.log_messages}")
         failed = True
     assert not failed, "test_save_failure_is_survivable"
