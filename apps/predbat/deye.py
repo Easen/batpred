@@ -28,6 +28,7 @@ from coordinator import inverter_record
 from mock_base import MockBase
 from oauth_mixin import OAuthMixin
 from tou_schedule import TouScheduleMixin
+from storage_cache import StorageCacheMixin
 from deye_const import (
     DEYE_BASE_URLS,
     DEYE_ENDPOINTS,
@@ -85,7 +86,7 @@ DEYE_CAPABILITIES = {
 DEYE_SCHEDULE_TIME_FORMAT = "HH:MM:SS"
 
 
-class DeyeAPI(ComponentBase, OAuthMixin, TouScheduleMixin):
+class DeyeAPI(ComponentBase, OAuthMixin, TouScheduleMixin, StorageCacheMixin):
     """DEYE Cloud API component."""
 
     # Trace every API request/response while the DEYE integration beds in; flip to
@@ -95,6 +96,9 @@ class DeyeAPI(ComponentBase, OAuthMixin, TouScheduleMixin):
 
     # How many slots the TOU programme holds, read by TouScheduleMixin.build_tou_slots.
     TOU_SLOTS = TOU_SLOT_COUNT
+    storage_module = DEYE_STORAGE_MODULE
+    storage_format = "json"
+    storage_log_name = "DEYE"
 
     def initialize(
         self,
@@ -1378,35 +1382,6 @@ class DeyeAPI(ComponentBase, OAuthMixin, TouScheduleMixin):
         """
         self._tier_refreshed[tier] = time.time() - (age_minutes or 0.0) * 60.0
 
-    async def load_cache(self, name):
-        """Return (data, age_minutes) for one cache file, or (None, None).
-
-        A cache must never break a run, so storage being absent, unreadable or corrupt is
-        reported and treated as a miss — the tier then simply refreshes.
-        """
-        storage = self.storage
-        if not storage:
-            return None, None
-        try:
-            result = await storage.load_cached(DEYE_STORAGE_MODULE, name)
-        except Exception as e:
-            self.log(f"Warn: DEYE could not read the {name} cache: {e}")
-            return None, None
-        if result is None:
-            return None, None
-        return result.value, result.age_minutes
-
-    async def save_cache(self, name, data):
-        """Persist one cache file. No-ops when storage is unavailable."""
-        storage = self.storage
-        if not storage:
-            return False
-        try:
-            return await storage.save_cached(DEYE_STORAGE_MODULE, name, data, format="json")
-        except Exception as e:
-            self.log(f"Warn: DEYE could not write the {name} cache: {e}")
-            return False
-
     async def save_static(self):
         """Cache discovery results."""
         return await self.save_cache(DEYE_CACHE_STATIC, {"station_ids": self.station_ids, "device_list": self.device_list})
@@ -1460,7 +1435,9 @@ class DeyeAPI(ComponentBase, OAuthMixin, TouScheduleMixin):
         the cadence survive a restart: a tier cached two minutes ago keeps the rest of its
         TTL, one cached nine hours ago re-polls immediately.
         """
-        static, age = await self.load_cache(DEYE_CACHE_STATIC)
+        static_result = await self.load_cache(DEYE_CACHE_STATIC)
+        static = static_result.value if static_result else None
+        age = static_result.age_minutes if static_result else None
         if isinstance(static, dict):
             station_ids = static.get("station_ids")
             device_list = static.get("device_list")
@@ -1473,7 +1450,9 @@ class DeyeAPI(ComponentBase, OAuthMixin, TouScheduleMixin):
                 self.mark_refreshed("static", age)
                 self.log(f"Info: DEYE restored {len(device_list)} inverter(s) from cache (age {self._age_text(age)})")
 
-        config, age = await self.load_cache(DEYE_CACHE_CONFIG)
+        config_result = await self.load_cache(DEYE_CACHE_CONFIG)
+        config = config_result.value if config_result else None
+        age = config_result.age_minutes if config_result else None
         if isinstance(config, dict) and config:
             self.device_battery_config = config
             self.mark_refreshed("config", age)
@@ -1481,7 +1460,8 @@ class DeyeAPI(ComponentBase, OAuthMixin, TouScheduleMixin):
         # Restored on the same tier clock as the battery config. Worth keeping across a
         # restart: without it the first write of a cycle that beats the config refresh would
         # clear a generator setting the inverter really does hold.
-        tou, _ = await self.load_cache(DEYE_CACHE_TOU)
+        tou_result = await self.load_cache(DEYE_CACHE_TOU)
+        tou = tou_result.value if tou_result else None
         if isinstance(tou, dict) and tou:
             self.device_tou_config = tou
 
@@ -1489,7 +1469,8 @@ class DeyeAPI(ComponentBase, OAuthMixin, TouScheduleMixin):
         # rewrites them on every live refresh. Restoring them unconditionally is the main
         # win: automatic_config() can map soc_max/battery_rate_max/inverter_limit at
         # startup without waiting for a poll to complete.
-        ratings, _ = await self.load_cache(DEYE_CACHE_RATINGS)
+        ratings_result = await self.load_cache(DEYE_CACHE_RATINGS)
+        ratings = ratings_result.value if ratings_result else None
         if isinstance(ratings, dict):
             self.device_capacity = ratings.get("capacity") or {}
             self.device_pack_voltage = ratings.get("pack_voltage") or {}
@@ -1503,7 +1484,9 @@ class DeyeAPI(ComponentBase, OAuthMixin, TouScheduleMixin):
         # from caching it 1440 times a day. The live clock therefore starts unset and the
         # first tick polls immediately.
 
-        control, age = await self.load_cache(DEYE_CACHE_CONTROL)
+        control_result = await self.load_cache(DEYE_CACHE_CONTROL)
+        control = control_result.value if control_result else None
+        age = control_result.age_minutes if control_result else None
         if isinstance(control, dict):
             orders = control.get("pending_orders")
             counts = control.get("order_poll_count")

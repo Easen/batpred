@@ -148,7 +148,7 @@ def test_alphaess_no_storage_component_is_silent():
     client = MockAlphaESS()  # storage property returns None
     run_async_local(client.save_control())
     data = run_async_local(client.load_cache("control"))
-    if data != {}:
+    if data is not None:
         print(f"ERROR: load_cache returned {data}")
         failed = True
     if any("Warn" in message for message in client.log_messages):

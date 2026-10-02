@@ -368,8 +368,8 @@ def test_cache_helpers_are_silent_when_storage_is_none():
         print(f"ERROR: save_cache raised with storage=None: {error}")
         failed = True
     age = run_async_local(s.age_cache(SUNSYNK_CACHE_CONFIG))
-    if loaded != {}:
-        print(f"ERROR: load_cache with no storage should return {{}}, got {loaded!r}")
+    if loaded is not None:
+        print(f"ERROR: load_cache with no storage should return None, got {loaded!r}")
         failed = True
     if age is not None:
         print(f"ERROR: age_cache with no storage should return None, got {age!r}")

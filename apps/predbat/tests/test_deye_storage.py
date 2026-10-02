@@ -733,7 +733,7 @@ def test_corrupt_cache_only_affects_its_own_tier():
     if d.tier_expired("static", DEYE_TTL_STATIC):
         print("ERROR: a corrupt config file must not disturb the static clock")
         failed = True
-    if not any("could not read the config cache" in m for m in d.log_messages):
+    if not any("could not load cache config" in m for m in d.log_messages):
         print(f"ERROR: expected a cache-read warning: {d.log_messages}")
         failed = True
     assert not failed, "test_corrupt_cache_only_affects_its_own_tier"
@@ -836,7 +836,7 @@ def test_save_failure_is_survivable():
     if result is not False:
         print(f"ERROR: a failed save should report False, got {result!r}")
         failed = True
-    if not any("could not write the static cache" in m for m in d.log_messages):
+    if not any("could not save cache static" in m for m in d.log_messages):
         print(f"ERROR: expected a cache-write warning: {d.log_messages}")
         failed = True
     assert not failed, "test_save_failure_is_survivable"
