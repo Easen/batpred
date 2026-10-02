@@ -92,7 +92,6 @@ from alphaess_const import (
     ALPHAESS_TTL_ENERGY,
 )
 
-
 _HOLD_NOT_EVALUATED = object()
 
 # The behaviour an AlphaESSCloud inverter has, stated for the discovery record's capabilities. A
@@ -2009,12 +2008,12 @@ class AlphaESSAPI(ComponentBase):
         if self.storage is None:
             return {}
         try:
-            data = await self.storage.load(ALPHAESS_STORAGE_MODULE, name)
+            result = await self.storage.load_cached(ALPHAESS_STORAGE_MODULE, name)
         except Exception as error:
             self.log("Warn: AlphaESS could not load cache {}: {}".format(name, error))
             self._restore_had_error = True
             return {}
-        return data if isinstance(data, dict) else {}
+        return result.value if result is not None and isinstance(result.value, dict) else {}
 
     async def save_cache(self, name, data):
         """Save one cache file, tolerating a storage failure.
@@ -2024,7 +2023,7 @@ class AlphaESSAPI(ComponentBase):
         if self.storage is None:
             return
         try:
-            await self.storage.save(ALPHAESS_STORAGE_MODULE, name, data)
+            await self.storage.save_cached(ALPHAESS_STORAGE_MODULE, name, data)
         except Exception as error:
             self.log("Warn: AlphaESS could not save cache {}: {}".format(name, error))
 

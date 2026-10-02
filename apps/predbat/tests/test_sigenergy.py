@@ -117,6 +117,19 @@ class FakeStorage:
         """Return 0 (fresh) if data exists for (module, filename), else None."""
         return 0 if (module, filename) in self.data else None
 
+    async def save_cached(self, module, filename, data, ttl_minutes=None, format="yaml", indent=None):
+        """Store a cache entry using the shared TTL-aware cache signature."""
+        return await self.save(module, filename, data, format=format)
+
+    async def load_cached(self, module, filename, ttl_minutes=None):
+        """Return a fresh cache result using the shared TTL-aware cache API."""
+        from storage import CacheResult
+
+        data = await self.load(module, filename)
+        if data is None:
+            return None
+        return CacheResult(value=data, age_minutes=0)
+
 
 # ---------------------------------------------------------------------------
 # Mock class

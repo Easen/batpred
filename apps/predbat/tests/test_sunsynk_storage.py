@@ -43,6 +43,22 @@ class FakeStorage:
         """Return the configured age in minutes, or None when never written."""
         return self.ages.get(filename)
 
+    async def save_cached(self, module, filename, data, ttl_minutes=None, format="yaml", indent=None):
+        """Record a cache entry using the shared cache API."""
+        return await self.save(module, filename, data, format=format)
+
+    async def load_cached(self, module, filename, ttl_minutes=None):
+        """Return a cache result using the configured fake age."""
+        from storage import CacheResult
+
+        data = await self.load(module, filename)
+        age = await self.age(module, filename)
+        if data is None:
+            return None
+        if ttl_minutes is not None and age is not None and age >= ttl_minutes:
+            return None
+        return CacheResult(value=data, age_minutes=age)
+
 
 class RaisingStorage:
     """Storage double whose every method raises, simulating a failing backend."""
@@ -57,6 +73,14 @@ class RaisingStorage:
 
     async def age(self, module, filename):
         """Raise to simulate an age-lookup failure."""
+        raise RuntimeError("simulated storage failure")
+
+    async def save_cached(self, *args, **kwargs):
+        """Raise to simulate a cache save failure."""
+        raise RuntimeError("simulated storage failure")
+
+    async def load_cached(self, *args, **kwargs):
+        """Raise to simulate a cache load failure."""
         raise RuntimeError("simulated storage failure")
 
 

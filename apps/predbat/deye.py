@@ -1388,14 +1388,13 @@ class DeyeAPI(ComponentBase, OAuthMixin, TouScheduleMixin):
         if not storage:
             return None, None
         try:
-            data = await storage.load(DEYE_STORAGE_MODULE, name)
-            if data is None:
-                return None, None
-            age = await storage.age(DEYE_STORAGE_MODULE, name)
+            result = await storage.load_cached(DEYE_STORAGE_MODULE, name)
         except Exception as e:
             self.log(f"Warn: DEYE could not read the {name} cache: {e}")
             return None, None
-        return data, age
+        if result is None:
+            return None, None
+        return result.value, result.age_minutes
 
     async def save_cache(self, name, data):
         """Persist one cache file. No-ops when storage is unavailable."""
@@ -1403,7 +1402,7 @@ class DeyeAPI(ComponentBase, OAuthMixin, TouScheduleMixin):
         if not storage:
             return False
         try:
-            return await storage.save(DEYE_STORAGE_MODULE, name, data, format="json", expiry=None)
+            return await storage.save_cached(DEYE_STORAGE_MODULE, name, data, format="json")
         except Exception as e:
             self.log(f"Warn: DEYE could not write the {name} cache: {e}")
             return False

@@ -22,7 +22,8 @@ import json
 import os
 import re
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 
 import aiofiles
 import yaml
@@ -50,6 +51,14 @@ def _parse_dt_utc(value):
 
 
 _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9_\-]")
+
+
+@dataclass(frozen=True)
+class CacheResult:
+    """Value and age returned by a successful TTL-aware cache lookup."""
+
+    value: object
+    age_minutes: float
 
 
 def _safe_name(value):
@@ -106,6 +115,25 @@ class StorageBase(ABC):
             Age in minutes as a float, or None if the entry does not exist
         """
         pass
+
+    async def save_cached(self, module, filename, data, ttl_minutes=None, format="yaml", indent=None):
+        """Save a cache entry using a relative TTL in minutes."""
+        expiry = None
+        if ttl_minutes is not None:
+            expiry = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(minutes=ttl_minutes)
+        return await self.save(module, filename, data, format=format, expiry=expiry, indent=indent)
+
+    async def load_cached(self, module, filename, ttl_minutes=None):
+        """Load a cache entry, returning None for a miss or expired entry."""
+        age = await self.age(module, filename)
+        if age is None:
+            return None
+        if ttl_minutes is not None and age >= ttl_minutes:
+            return None
+        value = await self.load(module, filename)
+        if value is None:
+            return None
+        return CacheResult(value=value, age_minutes=age)
 
     @abstractmethod
     async def cleanup(self):
@@ -557,6 +585,14 @@ class StorageComponent(ComponentBase):
             Age in minutes as a float, or None if the entry does not exist
         """
         return await self.backend.age(module, filename)
+
+    async def save_cached(self, module, filename, data, ttl_minutes=None, format="yaml", indent=None):
+        """Save a cache entry using a relative TTL in minutes."""
+        return await self.backend.save_cached(module, filename, data, ttl_minutes=ttl_minutes, format=format, indent=indent)
+
+    async def load_cached(self, module, filename, ttl_minutes=None):
+        """Load a cache entry with explicit miss, hit, and expiry semantics."""
+        return await self.backend.load_cached(module, filename, ttl_minutes=ttl_minutes)
 
     async def fetch_cached(self, module, filename, fetch_fn, fresh_minutes=30, stale_minutes=35, format="yaml"):
         """Fetch-or-cache via the storage backend's stale-while-revalidate helper.

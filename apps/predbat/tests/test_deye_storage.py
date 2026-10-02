@@ -46,6 +46,22 @@ class FakeStorage:
             return None
         return self.ages.get(filename, 0.0)
 
+    async def save_cached(self, module, filename, data, ttl_minutes=None, format="yaml", indent=None):
+        """Record a cache entry using the shared cache API."""
+        return await self.save(module, filename, data, format=format)
+
+    async def load_cached(self, module, filename, ttl_minutes=None):
+        """Return a cache result using the stored fake age."""
+        from storage import CacheResult
+
+        data = await self.load(module, filename)
+        age = await self.age(module, filename)
+        if data is None:
+            return None
+        if ttl_minutes is not None and age is not None and age >= ttl_minutes:
+            return None
+        return CacheResult(value=data, age_minutes=age)
+
 
 class StorageDeye(MockDeye):
     """MockDeye with an injectable storage component, mirroring tests/test_ge_cloud.py."""

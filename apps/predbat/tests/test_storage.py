@@ -106,6 +106,15 @@ def test_storage(my_predbat=None):
         # 12. age() returns None for a missing file
         assert run_async(storage.age("mod", "nonexistent_age")) is None, "age() should return None for missing file"
 
+        # 13. TTL-aware cache lookup distinguishes hit, expiry, and miss
+        assert run_async(storage.save_cached("ttl", "fresh", {"value": 1}, ttl_minutes=30, format="json")) is True
+        fresh = run_async(storage.load_cached("ttl", "fresh", ttl_minutes=30))
+        assert fresh is not None and fresh.value == {"value": 1}, "fresh cache lookup should be a hit: {}".format(fresh)
+        expired = run_async(storage.load_cached("ttl", "fresh", ttl_minutes=0))
+        assert expired is None, "expired cache lookup should be a miss: {}".format(expired)
+        missing = run_async(storage.load_cached("ttl", "missing", ttl_minutes=30))
+        assert missing is None, "missing cache lookup should be a miss: {}".format(missing)
+
         # fetch_cached: miss → calls fetch_fn once, stores, returns
         calls = {"n": 0}
 

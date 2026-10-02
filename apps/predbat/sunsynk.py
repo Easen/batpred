@@ -1350,7 +1350,7 @@ class SunsynkAPI(ComponentBase, OAuthMixin, TouScheduleMixin):
         if self.storage is None:
             return
         try:
-            await self.storage.save(SUNSYNK_STORAGE_MODULE, name, data)
+            await self.storage.save_cached(SUNSYNK_STORAGE_MODULE, name, data)
         except Exception as error:
             self.log(f"Warn: Sunsynk could not save cache {name}: {error}")
 
@@ -1371,6 +1371,17 @@ class SunsynkAPI(ComponentBase, OAuthMixin, TouScheduleMixin):
             return await self.storage.age(SUNSYNK_STORAGE_MODULE, name)
         except Exception as error:
             self.log(f"Warn: Sunsynk could not read cache age for {name}: {error}")
+            self._restore_had_error = True
+            return None
+
+    async def load_cache_result(self, name):
+        """Load a cache entry through the shared cache API, preserving retry semantics."""
+        if self.storage is None:
+            return None
+        try:
+            return await self.storage.load_cached(SUNSYNK_STORAGE_MODULE, name)
+        except Exception as error:
+            self.log(f"Warn: Sunsynk could not read cache {name}: {error}")
             self._restore_had_error = True
             return None
 
@@ -1423,20 +1434,20 @@ class SunsynkAPI(ComponentBase, OAuthMixin, TouScheduleMixin):
             return
         self._restore_had_error = False
 
-        static = await self.load_cache(SUNSYNK_CACHE_STATIC)
-        if static:
-            self.device_list = static.get("device_list", []) or []
-            self.device_detail = static.get("device_detail", {}) or {}
-            age = await self.age_cache(SUNSYNK_CACHE_STATIC)
-            if age is not None:
-                self.mark_refreshed("static", age)
+        static_result = await self.load_cache_result(SUNSYNK_CACHE_STATIC)
+        if static_result is not None:
+            static = static_result.value
+            if static:
+                self.device_list = static.get("device_list", []) or []
+                self.device_detail = static.get("device_detail", {}) or {}
+                self.mark_refreshed("static", static_result.age_minutes)
 
-        config = await self.load_cache(SUNSYNK_CACHE_CONFIG)
-        if config:
-            self.device_settings = config.get("device_settings", {}) or {}
-            age = await self.age_cache(SUNSYNK_CACHE_CONFIG)
-            if age is not None:
-                self.mark_refreshed("config", age)
+        config_result = await self.load_cache_result(SUNSYNK_CACHE_CONFIG)
+        if config_result is not None:
+            config = config_result.value
+            if config:
+                self.device_settings = config.get("device_settings", {}) or {}
+                self.mark_refreshed("config", config_result.age_minutes)
 
         ratings = await self.load_cache(SUNSYNK_CACHE_RATINGS)
         if ratings:
@@ -1449,9 +1460,10 @@ class SunsynkAPI(ComponentBase, OAuthMixin, TouScheduleMixin):
         # applied_payload without it would still leave every inverter silently unmanaged after a
         # restart. Past the age bound applied_payload is dropped, so a stale cache still forces a
         # fresh write-button press to recommit, rather than trusting old control state indefinitely.
-        control_age = await self.age_cache(SUNSYNK_CACHE_CONTROL)
-        if control_age is not None:
-            control = await self.load_cache(SUNSYNK_CACHE_CONTROL)
+        control_result = await self.load_cache_result(SUNSYNK_CACHE_CONTROL)
+        if control_result is not None:
+            control_age = control_result.age_minutes
+            control = control_result.value
             stored_active = control.get("control_active")
             if isinstance(stored_active, list):
                 self.control_active = set(stored_active)
