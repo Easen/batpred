@@ -3201,3 +3201,12 @@ def allocate_export_rates(needs, max_rates, p_fleet):
             remaining = 0.0
 
     return alloc
+
+
+def time_to_minutes(value):
+    """Convert an HH:MM[:SS] time string to minutes since midnight, or 0 on garbage."""
+    try:
+        parts = str(value).split(":")
+        return int(parts[0]) * 60 + int(parts[1])
+    except (ValueError, IndexError):
+        return 0

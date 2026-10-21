@@ -1831,14 +1831,6 @@ def test_teslemetry_component_registry_config():
     assert APPS_SCHEMA["teslemetry_tbc_control"] == {"type": "boolean"}
 
 
-def test_teslemetry_time_to_minutes():
-    """HH:MM:SS strings convert to minutes since midnight; garbage converts to 0."""
-    assert TeslemetryAPI.time_to_minutes("00:00:00") == 0
-    assert TeslemetryAPI.time_to_minutes("05:30:00") == 330
-    assert TeslemetryAPI.time_to_minutes("23:59:00") == 1439
-    assert TeslemetryAPI.time_to_minutes("garbage") == 0
-
-
 def test_teslemetry_in_window():
     """Window membership: inclusive start, exclusive end, disabled and midnight-wrap cases."""
     window = {"enable": 1, "start_time": "01:00:00", "end_time": "05:00:00"}
@@ -3108,7 +3100,6 @@ def test_teslemetry(my_predbat=None):
     test_teslemetry_soc_max_from_gateway_energy()
     test_teslemetry_automatic_config_wires_limits_without_overriding_apps_yaml()
     test_teslemetry_live_status_tracks_last_soc()
-    test_teslemetry_time_to_minutes()
     test_teslemetry_in_window()
     test_teslemetry_evaluate_schedule_states()
     test_teslemetry_evaluate_schedule_charge_precedence()

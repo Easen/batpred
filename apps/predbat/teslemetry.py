@@ -37,6 +37,8 @@ from component_base import ComponentBase
 from mock_base import MockBase
 from oauth_mixin import OAuthMixin
 
+from utils import time_to_minutes
+
 TESLEMETRY_DEFAULT_URL = "https://api.teslemetry.com"
 TESLEMETRY_TIMEOUT = 30
 TESLEMETRY_RETRIES = 3
@@ -638,21 +640,12 @@ class TeslemetryAPI(ComponentBase, OAuthMixin):
         self.dashboard_item(entity_id, value, attrs, app="teslemetry")
 
     @staticmethod
-    def time_to_minutes(value):
-        """Convert an HH:MM[:SS] time string to minutes since midnight, or 0 on garbage."""
-        try:
-            parts = str(value).split(":")
-            return int(parts[0]) * 60 + int(parts[1])
-        except (ValueError, IndexError):
-            return 0
-
-    @staticmethod
     def in_window(minutes_now, window):
         """Return True if minutes_now falls inside an enabled schedule window (inclusive start, exclusive end, midnight wrap supported; start == end means disabled)."""
         if not window.get("enable"):
             return False
-        start = TeslemetryAPI.time_to_minutes(window.get("start_time", "00:00:00"))
-        end = TeslemetryAPI.time_to_minutes(window.get("end_time", "00:00:00"))
+        start = time_to_minutes(window.get("start_time", "00:00:00"))
+        end = time_to_minutes(window.get("end_time", "00:00:00"))
         if start == end:
             return False
         if end > start:
@@ -1342,8 +1335,8 @@ class TeslemetryAPI(ComponentBase, OAuthMixin):
         window = self.schedule.get(direction, {})
         if not window.get("enable"):
             return None
-        start = self.time_to_minutes(window.get("start_time", "00:00:00"))
-        end = self.time_to_minutes(window.get("end_time", "00:00:00"))
+        start = time_to_minutes(window.get("start_time", "00:00:00"))
+        end = time_to_minutes(window.get("end_time", "00:00:00"))
         return None if start == end else (start, end)
 
     def _discharge_window(self):

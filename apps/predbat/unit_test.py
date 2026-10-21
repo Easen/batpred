@@ -273,6 +273,7 @@ from tests.test_battery_curve_keys import run_battery_curve_keys_tests
 from tests.test_balance_inverters import run_balance_inverters_tests
 from tests.test_balance_pure import run_balance_pure_tests
 from tests.test_utils_allocate import run_allocate_export_tests
+from tests.test_utils import run_utils_tests
 from tests.test_octopus_download_rates import test_octopus_download_rates_wrapper
 from tests.test_integer_config import (
     test_integer_config_entities,
@@ -528,6 +529,7 @@ def main():
         ("fill_load_from_power", test_fill_load_from_power, "Fill load from power sensor tests", False),
         ("fill_load_from_history", test_fill_load_from_history, "Fill load_today gaps from load_energy_h0 history tests", False),
         ("fetch_pv_forecast", test_fetch_pv_forecast, "Fetch PV forecast with relative_time offset tests", False),
+        ("utils_tests", run_utils_tests, "Utils tests", False),
         # Octopus Energy URL/API tests
         ("octopus_url", test_octopus_url, "Octopus URL/API comprehensive tests (downloads, day/night rates, saving sessions, intelligent dispatch, tariffs, EDF)", False),
         ("octopus_cache", test_octopus_cache_wrapper, "Octopus cache save/load tests", False),

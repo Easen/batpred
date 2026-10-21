@@ -60,6 +60,7 @@ from utils import (
     export_limit_is_full_discharge,
     is_entity_id,
     round_out_to_period,
+    time_to_minutes,
 )
 from config import INVERTER_DEF
 from prediction import Prediction
@@ -1963,7 +1964,7 @@ class Plan:
             if clipping_start_override is None:
                 start_time_str = self.get_arg("clipping_buffer_start_time", default="None")
                 if start_time_str and start_time_str != "None":
-                    clipping_start_override = self.time_to_minutes(start_time_str)
+                    clipping_start_override = time_to_minutes(start_time_str)
                     self.clipping_buffer_start = clipping_start_override
 
             # Stretch the start time backward only if clipping_start_override is explicitly set (REQ-40)
@@ -2699,11 +2700,11 @@ class Plan:
 
             self.clipping_buffer_start = None
             if start_time_str and start_time_str != "None":
-                self.clipping_buffer_start = self.time_to_minutes(start_time_str)
+                self.clipping_buffer_start = time_to_minutes(start_time_str)
 
             self.clipping_buffer_end = None
             if end_time_str and end_time_str != "None":
-                self.clipping_buffer_end = self.time_to_minutes(end_time_str)
+                self.clipping_buffer_end = time_to_minutes(end_time_str)
 
             # Calculate Implicit Buffer (Physics-based Decay Curve)
             self.clipping_buffer_forecast_kwh = {}
