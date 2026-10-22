@@ -144,3 +144,41 @@ def test_pv_chart_forecast_history_is_uncalibrated(my_predbat):
                 del my_predbat.dashboard_values
         else:
             my_predbat.dashboard_values = original_dashboard_values
+
+
+def test_clipping_chart_tolerates_missing_history(my_predbat):
+    """The Clipping chart should render when HA has no retained history for the optional entity."""
+    print("**** test_clipping_chart_tolerates_missing_history ****")
+
+    original_dashboard_values = getattr(my_predbat, "dashboard_values", None)
+    try:
+        w = _make_web(my_predbat)
+        stamp = (my_predbat.midnight_utc + timedelta(hours=1)).isoformat()
+        my_predbat.dashboard_values = {my_predbat.prefix + ".soc_kw_best": {"attributes": {"results": {stamp: 5.0}}}}
+
+        def history(entity_id, days=30, required=True, *args, **kwargs):
+            if entity_id == my_predbat.prefix + ".clipping_remaining":
+                if required:
+                    raise ValueError
+                else:
+                    return None
+            return []
+
+        w.get_history_wrapper = history
+        w.render_chart = lambda *args, **kwargs: ""
+
+        # The chart must not propagate the missing-history ValueError.  The live prediction
+        # overlay is absent here, so an empty clipping series is the expected result.
+        w.get_chart("Clipping")
+        print("✓ Clipping chart tolerates missing optional history")
+        print("✓ Test passed")
+        return False
+    except Exception as e:
+        print("ERROR: Clipping chart raised with missing history: {}".format(e))
+        return True
+    finally:
+        if original_dashboard_values is None:
+            if hasattr(my_predbat, "dashboard_values"):
+                del my_predbat.dashboard_values
+        else:
+            my_predbat.dashboard_values = original_dashboard_values

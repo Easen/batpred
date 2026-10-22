@@ -3510,7 +3510,8 @@ chart.render();
 
             # Data series parsing for per-minute data
             step_size = getattr(self.base, "plan_interval_minutes", 30)
-            clipping_remaining_raw = history_attribute(self.get_history_wrapper(self.prefix + ".clipping_remaining", 3))
+            clipping_remaining_history = self.get_history_wrapper(self.prefix + ".clipping_remaining", 3, required=False)
+            clipping_remaining_raw = history_attribute(clipping_remaining_history)
             clipping_remaining_series = prune_today(clipping_remaining_raw, self.now_utc, self.midnight_utc, prune_past_days=2)
 
             if getattr(self.base, "predict_clipping_remaining_best", None):
@@ -3520,7 +3521,8 @@ chart.render();
                         stamp = minute_timestamp.strftime(TIME_FORMAT)
                         clipping_remaining_series[stamp] = round(kwh, 2)
 
-            clipping_target_soc_raw = history_attribute(self.get_history_wrapper(self.prefix + ".clipping_target_soc", 3))
+            clipping_target_soc_history = self.get_history_wrapper(self.prefix + ".clipping_target_soc", 3, required=False)
+            clipping_target_soc_raw = history_attribute(clipping_target_soc_history)
             clipping_target_soc_series = prune_today(clipping_target_soc_raw, self.now_utc, self.midnight_utc, prune_past_days=2)
 
             if getattr(self.base, "predict_clipping_target_soc_best", None):
